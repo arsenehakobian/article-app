@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { config } from 'dotenv';
 import { DataSource } from 'typeorm';
+import { Article } from './src/articles/entities/article.entity';
 import { User } from './src/users/entities/user.entity';
 
 config();
@@ -15,5 +16,5 @@ export default new DataSource({
   password: configService.getOrThrow('PG_PASSWORD'),
   database: configService.getOrThrow('PG_DB'),
   migrations: ['migrations/**'],
-  entities: [User],
+  entities: [User, Article],
 });
