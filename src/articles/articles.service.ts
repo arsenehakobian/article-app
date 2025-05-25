@@ -1,10 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { Repository } from 'typeorm';
 import { Article } from './entities/article.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { User } from 'src/users/entities/user.entity';
 import { PaginatedResponseDto } from './dto/paginated-response.dto';
+import { FindArticlesDto } from './dto/find-articles.dto';
+import { UpdateArticleDto } from './dto/update-article.dto';
 
 export type ArticleWithTransformedAuthor = Omit<Article, 'author'> & {
   author: { id: number; email: string } | null;
@@ -45,21 +51,40 @@ export class ArticlesService {
     return this.transformArticle(savedArticle);
   }
 
-  async findAll(
-    page: number = 1,
-    limit: number = 10,
-  ): Promise<PaginatedResponseDto> {
+  async findAll(filters: FindArticlesDto): Promise<PaginatedResponseDto> {
+    const {
+      page = 1,
+      limit = 10,
+      authorId,
+      publishedAfter,
+      publishedBefore,
+    } = filters;
     const skip = (page - 1) * limit;
 
-    const [articles, total] = await this.articlesRepository.findAndCount({
-      relations: ['author'],
-      skip,
-      take: limit,
-      order: {
-        publishedAt: 'DESC',
-      },
-    });
+    const queryBuilder = this.articlesRepository
+      .createQueryBuilder('article')
+      .leftJoinAndSelect('article.author', 'author')
+      .skip(skip)
+      .take(limit)
+      .orderBy('article.publishedAt', 'DESC');
 
+    if (authorId) {
+      queryBuilder.andWhere('author.id = :authorId', { authorId });
+    }
+
+    if (publishedAfter) {
+      queryBuilder.andWhere('article.publishedAt >= :publishedAfter', {
+        publishedAfter,
+      });
+    }
+
+    if (publishedBefore) {
+      queryBuilder.andWhere('article.publishedAt <= :publishedBefore', {
+        publishedBefore,
+      });
+    }
+
+    const [articles, total] = await queryBuilder.getManyAndCount();
     const totalPages = Math.ceil(total / limit);
 
     return {
@@ -73,35 +98,55 @@ export class ArticlesService {
     };
   }
 
-  // async findOne(id: number): Promise<Article> {
-  //   const article = await this.articlesRepository.findOne({ where: { id } });
-  //   if (!article) {
-  //     throw new NotFoundException(`Article with ID ${id} not found`);
-  //   }
-  //   return article;
-  // }
+  async findOne(id: number): Promise<ArticleWithTransformedAuthor> {
+    const article = await this.articlesRepository.findOne({
+      where: { id },
+      relations: ['author'],
+    });
+    if (!article) {
+      throw new NotFoundException(`Article with ID ${id} not found`);
+    }
+    return this.transformArticle(article);
+  }
 
-  // async update(
-  //   id: number,
-  //   updateArticleDto: UpdateArticleDto,
-  // ): Promise<Article> {
-  //   const article = await this.findOne(id);
+  private async validateArticleOwnership(
+    id: number,
+    userId: number,
+  ): Promise<Article> {
+    const article = await this.articlesRepository.findOne({
+      where: { id },
+      relations: ['author'],
+    });
+    if (!article) {
+      throw new NotFoundException(`Article with ID ${id} not found`);
+    }
+    if (article.author?.id !== userId) {
+      throw new ForbiddenException('You are not the author of this article');
+    }
+    return article;
+  }
 
-  //   // Only update if there are actual changes
-  //   if (Object.keys(updateArticleDto).length > 0) {
-  //     await this.articlesRepository.save({
-  //       ...article,
-  //       ...updateArticleDto,
-  //     });
-  //   }
+  async update(
+    id: number,
+    updateArticleDto: UpdateArticleDto,
+    userId: number,
+  ): Promise<ArticleWithTransformedAuthor> {
+    const article = await this.validateArticleOwnership(id, userId);
 
-  //   return this.findOne(id);
-  // }
+    // Only update if there are actual changes
+    if (Object.keys(updateArticleDto).length > 0) {
+      const updatedArticle = await this.articlesRepository.save({
+        ...article,
+        ...updateArticleDto,
+      });
+      return this.transformArticle(updatedArticle);
+    }
 
-  // async remove(id: number): Promise<void> {
-  //   const result = await this.articlesRepository.delete(id);
-  //   if (result.affected === 0) {
-  //     throw new NotFoundException(`Article with ID ${id} not found`);
-  //   }
-  // }
+    return this.transformArticle(article);
+  }
+
+  async remove(id: number, userId: number): Promise<void> {
+    await this.validateArticleOwnership(id, userId);
+    await this.articlesRepository.delete(id);
+  }
 }
