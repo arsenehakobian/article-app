@@ -13,7 +13,7 @@ export class AuthService {
   ) {}
 
   async signUp(payload: AuthDto) {
-    const user = await this.usersService.createUser(payload);
+    const user = await this.usersService.create(payload);
     return {
       access_token: await this.jwtService.signAsync({
         sub: user.id,
@@ -23,7 +23,7 @@ export class AuthService {
   }
 
   async signIn(payload: AuthDto): Promise<any> {
-    const user: User | null = await this.usersService.findUserByEmail(
+    const user: User | null = await this.usersService.findByEmail(
       payload.email,
     );
 

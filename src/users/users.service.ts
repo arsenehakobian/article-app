@@ -18,7 +18,7 @@ export class UsersService {
     private readonly repository: Repository<User>,
   ) {}
 
-  async createUser(payload: AuthDto): Promise<User> {
+  async create(payload: AuthDto): Promise<User> {
     try {
       const hashedPassword: string = await bcrypt.hash(payload.password, 10);
       const user = await this.repository.create({
@@ -39,7 +39,7 @@ export class UsersService {
     }
   }
 
-  async findUserByEmail(email: string) {
+  async findByEmail(email: string) {
     try {
       return await this.repository.findOne({ where: { email } });
     } catch (error) {

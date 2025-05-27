@@ -11,6 +11,7 @@ import { User } from 'src/users/entities/user.entity';
 import { PaginatedResponseDto } from './dto/paginated-response.dto';
 import { FindArticlesDto } from './dto/find-articles.dto';
 import { UpdateArticleDto } from './dto/update-article.dto';
+import { RedisService } from 'src/redis/redis.service';
 
 export type ArticleWithTransformedAuthor = Omit<Article, 'author'> & {
   author: { id: number; email: string } | null;
@@ -23,6 +24,7 @@ export class ArticlesService {
     private readonly articlesRepository: Repository<Article>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    private readonly redisService: RedisService,
   ) {}
 
   private transformArticle(article: Article): ArticleWithTransformedAuthor {
@@ -48,10 +50,23 @@ export class ArticlesService {
       author,
     });
     const savedArticle = await this.articlesRepository.save(article);
-    return this.transformArticle(savedArticle);
+    const response = this.transformArticle(savedArticle);
+    await this.redisService.set(
+      `article:${savedArticle.id}`,
+      JSON.stringify(response),
+    );
+
+    return response;
   }
 
   async findAll(filters: FindArticlesDto): Promise<PaginatedResponseDto> {
+    const cachedArticles = await this.redisService.get(
+      `articles:${JSON.stringify(filters)}`,
+    );
+    if (cachedArticles) {
+      return JSON.parse(cachedArticles) as PaginatedResponseDto;
+    }
+
     const {
       page = 1,
       limit = 10,
@@ -87,7 +102,7 @@ export class ArticlesService {
     const [articles, total] = await queryBuilder.getManyAndCount();
     const totalPages = Math.ceil(total / limit);
 
-    return {
+    const response = {
       data: articles.map((article) => this.transformArticle(article)),
       meta: {
         total,
@@ -96,9 +111,21 @@ export class ArticlesService {
         totalPages,
       },
     };
+
+    await this.redisService.set(
+      `articles:${JSON.stringify(filters)}`,
+      JSON.stringify(response),
+    );
+
+    return response;
   }
 
   async findOne(id: number): Promise<ArticleWithTransformedAuthor> {
+    const cachedArticle = await this.redisService.get(`article:${id}`);
+    if (cachedArticle) {
+      return JSON.parse(cachedArticle) as ArticleWithTransformedAuthor;
+    }
+
     const article = await this.articlesRepository.findOne({
       where: { id },
       relations: ['author'],
@@ -106,7 +133,9 @@ export class ArticlesService {
     if (!article) {
       throw new NotFoundException(`Article with ID ${id} not found`);
     }
-    return this.transformArticle(article);
+    const response = this.transformArticle(article);
+    await this.redisService.set(`article:${id}`, JSON.stringify(response));
+    return response;
   }
 
   private async validateArticleOwnership(
@@ -139,7 +168,12 @@ export class ArticlesService {
         ...article,
         ...updateArticleDto,
       });
-      return this.transformArticle(updatedArticle);
+      const response = this.transformArticle(updatedArticle);
+      await this.redisService.set(
+        `article:${updatedArticle.id}`,
+        JSON.stringify(response),
+      );
+      return response;
     }
 
     return this.transformArticle(article);
@@ -148,5 +182,6 @@ export class ArticlesService {
   async remove(id: number, userId: number): Promise<void> {
     await this.validateArticleOwnership(id, userId);
     await this.articlesRepository.delete(id);
+    await this.redisService.del(`article:${id}`);
   }
 }
